@@ -3,7 +3,7 @@
 ## リポジトリ構成
 
 - このリポジトリ: プレーヤー向けコード + ゲーム仕様書
-- 運営システム: /Users/susumu/TenkaCloud（gameday-service として統合）
+- 運営システム: https://github.com/susumutomita/TenkaCloud（gameday-service として統合）
 
 ## プレーヤー向けコード
 

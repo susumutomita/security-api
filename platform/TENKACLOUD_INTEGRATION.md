@@ -1,7 +1,7 @@
 # TenkaCloud 統合レポート — Security Battle Royale
 
 > 作成日: 2026-03-08
-> 対象: `/Users/susumu/TenkaCloud` (commit: latest on main)
+> 対象: https://github.com/susumutomita/TenkaCloud (commit: latest on main)
 
 ---
 
