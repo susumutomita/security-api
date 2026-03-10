@@ -8,7 +8,6 @@ Security Battle Royale は、複数チームが自社AWSインフラを守りな
 security-api/
 ├── api.py                  # チーム側 Flask API（意図的な脆弱性を含む）
 ├── package.sh              # S3へのデプロイスクリプト
-├── cloudformation.yaml     # チーム用AWSリソーステンプレート
 ├── platform/
 │   ├── SPEC.md             # ゲーム仕様（目次）
 │   ├── TENKACLOUD_INTEGRATION.md  # TenkaCloud統合方針
@@ -23,17 +22,6 @@ security-api/
 │       └── technical.md    # 技術仕様
 └── PROMPT.md               # ゲームルール参考情報
 ```
-
-## チーム側インフラ
-
-各チームに以下のAWSリソースが割り当てられる（`cloudformation.yaml` で定義）:
-
-| コンポーネント | サービス | 説明 |
-|--------------|---------|------|
-| Website | Amazon S3 | 静的Webサイトホスティング |
-| API Flask App | Amazon EC2 | Flask REST API（Amazon Linux 2023） |
-| Database | Amazon RDS | MySQL（データベース名: `cavsdb`） |
-| Source Code | Amazon S3 | `flask_api.zip` として保管 |
 
 ## API エンドポイント
 
