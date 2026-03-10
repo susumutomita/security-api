@@ -24,6 +24,13 @@ Parameters:
   PrivateSubnet2Id:
     Type: AWS::EC2::Subnet::Id
     Description: Private subnet 2 for RDS
+  DBMasterUsername:
+    Type: String
+    Default: dbadmin
+    Description: Master username for RDS
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
   LatestAmiId:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
@@ -69,18 +76,6 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub "${WebsiteBucket.Arn}/*"
 
-  # --- Secrets Manager: DB Password ---
-  DatabasePasswordSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: DatabasePasswordSecret
-      Description: RDS MySQL admin password
-      GenerateSecretString:
-        SecretStringTemplate: '{"username": "admin"}'
-        GenerateStringKey: password
-        PasswordLength: 16
-        ExcludeCharacters: '"@/\'
-
   # --- RDS: MySQL Database ---
   DBSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
@@ -110,8 +105,8 @@ Resources:
       EngineVersion: "8.0"
       DBInstanceClass: db.t3.micro
       AllocatedStorage: 20
-      MasterUsername: admin
-      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DatabasePasswordSecret}:SecretString:password}}"
+      MasterUsername: !Ref DBMasterUsername
+      ManageMasterUserPassword: true
       DBSubnetGroupName: !Ref DBSubnetGroup
       VPCSecurityGroups:
         - !GetAtt DBSecurityGroup.GroupId
@@ -156,7 +151,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Ref DatabasePasswordSecret
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:DatabasePasswordSecret*"
               - Effect: Allow
                 Action:
                   - s3:GetObject
