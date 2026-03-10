@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs
+*.log
+
+# Playwright MCP (screenshots, logs)
+.playwright-mcp/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local

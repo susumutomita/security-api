@@ -1,0 +1,268 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Security Battle Royale - Team Infrastructure
+  Each team gets: EC2 (Flask API), RDS (MySQL), S3 (Static Website + Source Code)
+
+Parameters:
+  TeamName:
+    Type: String
+    Description: Team identifier
+    AllowedPattern: "[a-zA-Z0-9-]+"
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small, t3.medium]
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC for team resources
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for EC2
+  PrivateSubnet1Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet 1 for RDS
+  PrivateSubnet2Id:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet 2 for RDS
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  # --- S3: Application Source Code ---
+  ApplicationSourceCodeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${TeamName}-applicationsourcecode-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: GameDay
+          Value: !Ref TeamName
+
+  # --- S3: Static Website ---
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${TeamName}-website-${AWS::AccountId}"
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: GameDay
+          Value: !Ref TeamName
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${WebsiteBucket.Arn}/*"
+
+  # --- Secrets Manager: DB Password ---
+  DatabasePasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: DatabasePasswordSecret
+      Description: RDS MySQL admin password
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "admin"}'
+        GenerateStringKey: password
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  # --- RDS: MySQL Database ---
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${TeamName} RDS subnet group"
+      SubnetIds:
+        - !Ref PrivateSubnet1Id
+        - !Ref PrivateSubnet2Id
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${TeamName} RDS security group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "${TeamName}-cavsdb"
+      DBName: cavsdb
+      Engine: mysql
+      EngineVersion: "8.0"
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      MasterUsername: admin
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DatabasePasswordSecret}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DBSecurityGroup.GroupId
+      PubliclyAccessible: false
+      Tags:
+        - Key: GameDay
+          Value: !Ref TeamName
+
+  # --- SSM Parameter: DB Endpoint ---
+  DBEndpointParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: CAVS_DB_ENDPOINT
+      Type: String
+      Value: !GetAtt RDSInstance.Endpoint.Address
+      Description: RDS MySQL endpoint for Flask API
+
+  # --- IAM: EC2 Instance Role ---
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${TeamName}-api-ec2-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: GameDayEC2Policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/CAVS_DB_ENDPOINT"
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DatabasePasswordSecret
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ApplicationSourceCodeBucket.Arn
+                  - !Sub "${ApplicationSourceCodeBucket.Arn}/*"
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: api-ec2-instance-profile
+      Roles:
+        - !Ref EC2Role
+
+  # --- EC2: Flask API App ---
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${TeamName} API Flask App security group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn:
+      - DBEndpointParameter
+      - ApplicationSourceCodeBucket
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds:
+        - !GetAtt EC2SecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: API Flask App
+        - Key: GameDay
+          Value: !Ref TeamName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          dnf update -y
+          dnf install -y python3-pip
+          python3 -m pip install flask boto3 PyMySQL
+          dnf install mariadb105 -y
+          mkdir /api
+          cd /api
+          aws s3 cp s3://${ApplicationSourceCodeBucket}/flask_api.zip /api/flask_api.zip
+          unzip flask_api.zip
+          chmod +700 api.py
+          python3 api.py &
+
+  # --- Auditor Cross-Account Role ---
+  AuditorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${TeamName}-auditor-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:PrincipalTag/GameDayAuditor: "true"
+      Policies:
+        - PolicyName: AuditorReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - rds:DescribeDBInstances
+                  - s3:ListBucket
+                  - s3:GetObject
+                  - s3:GetBucketWebsite
+                Resource: "*"
+
+Outputs:
+  EC2PublicIP:
+    Description: Public IP of the API Flask App
+    Value: !GetAtt EC2Instance.PublicIp
+
+  WebsiteURL:
+    Description: S3 Website URL
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+
+  SourceCodeBucket:
+    Description: S3 bucket for application source code
+    Value: !Ref ApplicationSourceCodeBucket
+
+  RDSEndpoint:
+    Description: RDS MySQL endpoint
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  AuditorRoleArn:
+    Description: ARN for cross-account auditor access
+    Value: !GetAtt AuditorRole.Arn
