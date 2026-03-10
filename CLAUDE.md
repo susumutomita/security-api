@@ -8,7 +8,7 @@
 ## プレーヤー向けコード
 
 - `api.py` — チーム側Flask API（脆弱性の参照元）
-- `cloudformation.yaml` — チームAWSリソーステンプレート
+- `package.sh` — S3へのデプロイスクリプト
 
 ## 仕様書
 

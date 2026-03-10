@@ -1,55 +1,55 @@
-# Flask API
+# AWS GameDay "Security Battle Royale"
 
-A Flask-based REST API for the AWS GameDay Battle Royale application that manages unicorn data and provides database connectivity.
+Security Battle Royale は、複数チームが自社AWSインフラを守りながら他チームの脆弱性を攻撃し、最高スコアを目指すセキュリティ競技イベント。
 
-## Files
+## リポジトリ構成
 
-- `api.py` - Main Flask application with REST endpoints
-- `package.sh` - Build and deployment script
-- `.gitignore` - Git ignore rules
+```
+security-api/
+├── api.py                  # チーム側 Flask API（意図的な脆弱性を含む）
+├── package.sh              # S3へのデプロイスクリプト
+├── platform/
+│   ├── SPEC.md             # ゲーム仕様（目次）
+│   ├── TENKACLOUD_INTEGRATION.md  # TenkaCloud統合方針
+│   └── specs/              # 詳細仕様
+│       ├── scoring.md      # スコアリング
+│       ├── game-flow.md    # ゲーム進行フロー
+│       ├── attack-defense.md  # 攻撃・防御メカニクス
+│       ├── alliance.md     # 同盟システム
+│       ├── side-quests.md  # サイドクエスト
+│       ├── admin.md        # 管理者機能
+│       ├── dashboards.md   # ダッシュボード
+│       └── technical.md    # 技術仕様
+└── PROMPT.md               # ゲームルール参考情報
+```
 
-## API Endpoints
+## API エンドポイント
 
-### Status Endpoints
-- `GET /api/v1/apistatus` - API health check
-- `GET /api/v1/dbstatus` - Database connectivity check
-- `GET /api/v1/region` - Returns current AWS region
+| エンドポイント | メソッド | 説明 |
+|--------------|---------|------|
+| `/` | GET | トップページ |
+| `/api/v1/apistatus` | GET | APIステータス（Auditor使用） |
+| `/api/v1/dbstatus` | GET/POST | DBステータス確認 |
+| `/api/v1/setdbpwd` | POST | DBパスワード変更（Auditor使用） |
+| `/api/v1/unicorns` | GET | ユニコーン一覧 |
+| `/api/v1/unicorns/login` | GET | ログイン |
+| `/api/v1/unicorn` | POST/PATCH | ユニコーン登録・更新 |
+| `/api/v1/latest` | GET | 最新エントリ |
+| `/api/v1/region` | GET | リージョン取得（Auditor使用） |
+| `/api/v1/proxy` | GET | プロキシ |
+| `/backdoor` | GET | バックドア |
 
-### Unicorn Management
-- `GET /api/v1/unicorns` - List all unicorns (optional `?id=` parameter)
-- `GET /api/v1/latest` - Get latest unicorn entry
-- `POST /api/v1/unicorn` - Create/update unicorn
-- `PATCH /api/v1/unicorn` - Update existing unicorn
-- `GET /api/v1/unicorns/login` - Unicorn authentication
+## デプロイ
 
-### Database Management
-- `POST /api/v1/setdbpwd` - Update database password
-
-### Utility
-- `GET /api/v1/proxy` - HTTP proxy endpoint
-
-## Dependencies
-
-- Flask
-- boto3
-- pymysql
-- requests
-
-## Configuration
-
-The API connects to:
-- MySQL database via SSM Parameter Store (`CAVS_DB_ENDPOINT`)
-- AWS Secrets Manager for credentials
-- EC2 instance metadata for region detection
-
-## Deployment
-
-Run `./package.sh` to build and upload to S3:
 ```bash
 chmod +x package.sh
 ./package.sh
 ```
 
-## Backup of the Backup
+## 運営システム
 
-Should you need a backup for this code, it can be downloaded here: https://ws-assets-prod-iad-r-iad-ed304a55c2ca1aee.s3.us-east-1.amazonaws.com/fd5f909a-e782-4dbb-94c0-c2e2a61191ab/flask_api.zip
+バックエンドは [TenkaCloud](https://github.com/susumutomita/TenkaCloud) の `gameday-service` として統合。詳細は `platform/TENKACLOUD_INTEGRATION.md` を参照。
+
+## 依存関係
+
+- Python 3, Flask, boto3, PyMySQL, requests
